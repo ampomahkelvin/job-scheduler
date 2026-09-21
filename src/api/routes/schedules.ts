@@ -1,14 +1,17 @@
 import type { FastifyInstance } from 'fastify'
-import { queue } from '../../queues'
+import { queue, upsertJobScheduler } from '../../queues'
 import { logger } from '../../lib/logger'
 import { AppError } from '../errorHandler'
+import type { RepeatOptions } from 'bullmq'
 import type {
   ScheduleInput,
   ScheduleIdParam,
 } from '../schemas'
+import { createHash } from 'crypto'
 
 interface RepeatableJob {
   id: string
+  key: string
   name: string
   data: Record<string, unknown>
   opts: Record<string, unknown>
@@ -17,16 +20,28 @@ interface RepeatableJob {
   tz?: string
   limit?: number
   nextRun?: number
+  repeat?: RepeatOptions
+}
+
+interface UpsertedJob {
+  id: string
   key: string
+  name: string
+  data: Record<string, unknown>
+  opts: Record<string, unknown>
+  repeat?: RepeatOptions
+  nextRun?: number
+}
+
+function generateSchedulerId(name: string, repeat: Record<string, unknown>): string {
+  const repeatStr = JSON.stringify(repeat, Object.keys(repeat).sort())
+  const hash = createHash('sha256').update(`${name}:${repeatStr}`).digest('hex').slice(0, 16)
+  return `${name}:${hash}`
 }
 
 async function schedulesRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: ScheduleInput }>('/', async (req, reply) => {
     const { name, data, pattern, every, tz, limit, options } = req.body
-
-    if (!pattern && !every) {
-      throw new AppError(400, 'ValidationError', 'Either pattern (cron) or every (ms) must be provided')
-    }
 
     const repeat: Record<string, unknown> = {}
     if (pattern) repeat.pattern = pattern
@@ -34,18 +49,24 @@ async function schedulesRoutes(app: FastifyInstance): Promise<void> {
     if (tz) repeat.tz = tz
     if (limit) repeat.limit = limit
 
-    const job = await queue.add(name, data, {
-      repeat,
-      ...options,
-    })
+    const schedulerId = generateSchedulerId(name, repeat)
 
-    logger.info({ jobId: job.id, name, repeat }, 'Scheduled job created')
+    const { key: repeatKey, ...repeatOpts } = repeat as RepeatOptions & { key?: string }
+
+    const repeatableJob = await upsertJobScheduler(schedulerId, repeatOpts, data, options) as UpsertedJob
+
+    logger.info({ repeatableJobKey: repeatableJob.key, name, repeat }, 'Schedule upserted')
     return reply.status(201).send({
-      id: job.id,
-      name: job.name,
-      data: job.data,
-      opts: job.opts,
-      repeat: job.opts?.repeat,
+      id: repeatableJob.id,
+      key: repeatableJob.key,
+      name: repeatableJob.name,
+      data: repeatableJob.data,
+      opts: repeatableJob.opts,
+      pattern: repeatableJob.repeat?.pattern,
+      every: repeatableJob.repeat?.every,
+      tz: repeatableJob.repeat?.tz,
+      limit: repeatableJob.repeat?.limit,
+      nextRun: repeatableJob.nextRun ? new Date(repeatableJob.nextRun).toISOString() : undefined,
       timestamp: new Date().toISOString(),
     })
   })
@@ -56,6 +77,7 @@ async function schedulesRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(
       repeatableJobs.map((job) => ({
         id: job.id,
+        key: job.key,
         name: job.name,
         data: job.data,
         opts: job.opts,
@@ -63,7 +85,7 @@ async function schedulesRoutes(app: FastifyInstance): Promise<void> {
         every: job.every,
         tz: job.tz,
         limit: job.limit,
-        nextRun: job.nextRun,
+        nextRun: job.nextRun ? new Date(job.nextRun).toISOString() : undefined,
       }))
     )
   })
@@ -79,6 +101,7 @@ async function schedulesRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.send({
       id: job.id,
+      key: job.key,
       name: job.name,
       data: job.data,
       opts: job.opts,
@@ -86,7 +109,7 @@ async function schedulesRoutes(app: FastifyInstance): Promise<void> {
       every: job.every,
       tz: job.tz,
       limit: job.limit,
-      nextRun: job.nextRun,
+      nextRun: job.nextRun ? new Date(job.nextRun).toISOString() : undefined,
     })
   })
 
