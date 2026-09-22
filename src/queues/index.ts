@@ -1,4 +1,4 @@
-import type { QueueOptions, Job} from 'bullmq';
+import type { QueueOptions, Job, RepeatOptions } from 'bullmq';
 import { Queue, Worker } from 'bullmq'
 import { getRedisConnection, getWorkerRedisConnection } from '../lib/redis'
 import { logger } from '../lib/logger'
@@ -38,6 +38,15 @@ export async function addJobBulk<T extends JobData>(
   jobs: Array<{ name: string; data: T; options?: JobOptions }>
 ): Promise<Job<T>[]> {
   return queue.addBulk(jobs.map((j) => ({ name: j.name, data: j.data, opts: j.options })))
+}
+
+export async function upsertJobScheduler<T extends JobData>(
+  schedulerId: string,
+  repeat: Omit<RepeatOptions, 'key'>,
+  data: T,
+  options?: JobOptions
+): Promise<unknown> {
+  return queue.upsertJobScheduler(schedulerId, repeat, { name: schedulerId, data, opts: options })
 }
 
 export async function getJobCounts(): Promise<Record<string, number>> {

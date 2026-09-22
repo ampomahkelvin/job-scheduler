@@ -1,4 +1,17 @@
 import { z } from 'zod'
+import { CronExpressionParser } from 'cron-parser'
+
+export const cronPatternSchema = z.string().refine(
+  (val) => {
+    try {
+      CronExpressionParser.parse(val)
+      return true
+    } catch {
+      return false
+    }
+  },
+  { message: 'Invalid cron expression' }
+)
 
 export const createJobSchema = z.object({
   name: z.string().min(1),
@@ -42,7 +55,7 @@ export const jobQuerySchema = z.object({
 export const scheduleSchema = z.object({
   name: z.string().min(1),
   data: z.record(z.unknown()),
-  pattern: z.string().optional(),
+  pattern: cronPatternSchema.optional(),
   every: z.number().int().positive().optional(),
   tz: z.string().optional(),
   limit: z.number().int().positive().optional(),
@@ -58,7 +71,10 @@ export const scheduleSchema = z.object({
         .optional(),
     })
     .optional(),
-})
+}).refine(
+  (data) => data.pattern || data.every,
+  { message: 'Either pattern (cron) or every (ms) must be provided', path: ['pattern'] }
+)
 
 export const scheduleIdParamSchema = z.object({
   id: z.string().min(1),
