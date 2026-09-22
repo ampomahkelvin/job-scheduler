@@ -60,10 +60,11 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
         opts: job.opts,
         progress: job.progress,
         attemptsMade: job.attemptsMade,
-        timestamp: job.timestamp,
-        processedOn: job.processedOn,
-        finishedOn: job.finishedOn,
+        timestamp: job.timestamp ? new Date(job.timestamp).toISOString() : undefined,
+        processedOn: job.processedOn ? new Date(job.processedOn).toISOString() : undefined,
+        finishedOn: job.finishedOn ? new Date(job.finishedOn).toISOString() : undefined,
         failedReason: job.failedReason,
+        failedAt: job.failedReason ? (job.finishedOn ? new Date(job.finishedOn).toISOString() : undefined) : undefined,
         returnvalue: job.returnvalue,
       })),
     })
@@ -77,6 +78,10 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
       throw new AppError(404, 'JobNotFound', `Job '${id}' not found`)
     }
 
+    const finishedOn = job.finishedOn ? new Date(job.finishedOn).toISOString() : undefined
+    const processedOn = job.processedOn ? new Date(job.processedOn).toISOString() : undefined
+    const timestamp = job.timestamp ? new Date(job.timestamp).toISOString() : undefined
+
     return reply.send({
       id: job.id,
       name: job.name,
@@ -84,10 +89,11 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
       opts: job.opts,
       progress: job.progress,
       attemptsMade: job.attemptsMade,
-      timestamp: job.timestamp,
-      processedOn: job.processedOn,
-      finishedOn: job.finishedOn,
+      timestamp,
+      processedOn,
+      finishedOn,
       failedReason: job.failedReason,
+      failedAt: job.failedReason ? finishedOn : undefined,
       returnvalue: job.returnvalue,
       stacktrace: job.stacktrace,
     })
