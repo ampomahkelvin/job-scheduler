@@ -12,6 +12,7 @@ import { errorHandler, notFoundHandler } from './api/errorHandler'
 import jobsRoutes from './api/routes/jobs'
 import schedulesRoutes from './api/routes/schedules'
 import healthRoutes from './api/routes/health'
+import deadLetterRoutes from './api/routes/dead-letter'
 import './jobs/handlers/echo'
 
 const server = fastify({
@@ -46,6 +47,7 @@ async function buildServer(): Promise<typeof server> {
   server.register(healthRoutes, { prefix: '/health' })
   server.register(jobsRoutes, { prefix: '/jobs' })
   server.register(schedulesRoutes, { prefix: '/schedules' })
+  server.register(deadLetterRoutes, { prefix: '/dead-letter' })
 
   const serverAdapter = new FastifyAdapter()
   createBullBoard({

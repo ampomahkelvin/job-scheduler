@@ -34,6 +34,8 @@ export interface JobOptions {
   removeOnComplete?: boolean | number
   removeOnFail?: boolean | number
   repeat?: RepeatOptions
+  timeout?: number
+  timeoutRetryable?: boolean
 }
 
 export interface RepeatOptions {
@@ -44,7 +46,7 @@ export interface RepeatOptions {
 }
 
 export type JobHandler<T extends JobData = JobData> = (
-  job: { data: T; id: string; attemptsMade: number; updateProgress: (progress: number) => Promise<void> }
+  job: { data: T; id: string; attemptsMade: number; updateProgress: (progress: number) => Promise<void>; signal?: AbortSignal }
 ) => Promise<JobResult>
 
 export interface JobDefinition<T extends JobData = JobData> {
@@ -52,4 +54,36 @@ export interface JobDefinition<T extends JobData = JobData> {
   handler: JobHandler<T>
   schema?: z.ZodSchema<T>
   defaultOptions?: JobOptions
+}
+
+export class UnrecoverableError extends Error {
+  public readonly retryable = false
+  constructor(message: string, public readonly details?: unknown) {
+    super(message)
+    this.name = 'UnrecoverableError'
+  }
+}
+
+export class RetryableError extends Error {
+  public readonly retryable = true
+  constructor(message: string, public readonly details?: unknown) {
+    super(message)
+    this.name = 'RetryableError'
+  }
+}
+
+export function isRetryableError(error: unknown): boolean {
+  if (error instanceof RetryableError) return true
+  if (error instanceof UnrecoverableError) return false
+  if (error instanceof Error) {
+    const retryableNames = ['AbortError', 'TimeoutError', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN']
+    if (retryableNames.some(name => error.name.includes(name) || error.message.includes(name))) {
+      return true
+    }
+    const retryableCodes = ['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN']
+    if ('code' in error && typeof error.code === 'string' && retryableCodes.includes(error.code)) {
+      return true
+    }
+  }
+  return true
 }
