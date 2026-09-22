@@ -15,7 +15,7 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
 
     const jobDef = getJob(name)
     if (!jobDef) {
-      throw new AppError(404, 'JobNotFound', `Job '${name}' not found`)
+      throw new AppError(422, 'JobTypeNotFound', `Job type '${name}' not found`)
     }
 
     if (jobDef.schema) {
@@ -41,7 +41,8 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
   })
 
   app.get<{ Querystring: JobQuery }>('/', async (req, reply) => {
-    const { status, start = 0, end = 49 } = req.query
+    const { status, start = 0, count = 50 } = req.query
+    const end = start + count - 1
 
     const counts = await getJobCounts()
     const jobs = await queue.getJobs(
@@ -92,16 +93,23 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
     })
   })
 
-  app.delete<{ Params: JobIdParam }>('/:id', async (req, reply) => {
+  app.delete<{ Params: JobIdParam; Querystring: { force?: string } }>('/:id', async (req, reply) => {
     const { id } = req.params
+    const force = req.query.force === 'true'
     const job = await queue.getJob(id)
 
     if (!job) {
       throw new AppError(404, 'JobNotFound', `Job '${id}' not found`)
     }
 
-    await job.remove()
-    logger.info({ jobId: id }, 'Job removed')
+    if (force) {
+      await job.discard()
+      logger.info({ jobId: id, force: true }, 'Job discarded (forced)')
+    } else {
+      await job.remove()
+      logger.info({ jobId: id, force: false }, 'Job removed')
+    }
+
     return reply.status(204).send()
   })
 
