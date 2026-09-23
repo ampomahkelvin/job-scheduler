@@ -36,6 +36,11 @@ export interface JobOptions {
   repeat?: RepeatOptions
   timeout?: number
   timeoutRetryable?: boolean
+  jobId?: string
+  rateLimit?: {
+    max: number
+    duration: number
+  }
 }
 
 export interface RepeatOptions {

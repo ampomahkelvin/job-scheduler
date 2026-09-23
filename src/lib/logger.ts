@@ -29,3 +29,7 @@ export const logger = pino({
 export function createChildLogger(bindings: Record<string, unknown>) {
   return logger.child(bindings)
 }
+
+export function createJobLogger(jobId: string, jobName: string) {
+  return logger.child({ jobId, jobName })
+}

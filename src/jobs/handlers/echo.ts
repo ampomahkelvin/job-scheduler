@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { JobHandler, JobResult } from '../types'
 import { registerJob } from '../registry'
-import { logger } from '../../lib/logger'
+import { logger, createJobLogger } from '../../lib/logger'
 
 export const echoJobSchema = z.object({
   message: z.string().min(1),
@@ -13,15 +13,16 @@ export type EchoJobData = z.infer<typeof echoJobSchema>
 
 const echoHandler: JobHandler<EchoJobData> = async ({ data, id, attemptsMade, updateProgress }) => {
   const { message, repeat = 1, delay = 0 } = data
+  const jobLogger = createJobLogger(id, 'echo')
 
-  logger.info({ jobId: id, message, attempt: attemptsMade + 1 }, 'Processing echo job')
+  jobLogger.info({ message, attempt: attemptsMade + 1 }, 'Processing echo job')
 
   for (let i = 0; i < repeat; i++) {
     if (delay > 0) {
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
     await updateProgress(Math.round(((i + 1) / repeat) * 100))
-    logger.debug({ jobId: id, iteration: i + 1, total: repeat }, 'Echo iteration')
+    jobLogger.debug({ iteration: i + 1, total: repeat }, 'Echo iteration')
   }
 
   const result: JobResult = {
@@ -29,7 +30,7 @@ const echoHandler: JobHandler<EchoJobData> = async ({ data, id, attemptsMade, up
     data: { message, echoed: repeat, processedAt: new Date().toISOString() },
   }
 
-  logger.info({ jobId: id, result }, 'Echo job completed')
+  jobLogger.info({ result }, 'Echo job completed')
   return result
 }
 

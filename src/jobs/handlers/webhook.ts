@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { JobHandler, JobResult } from '../types'
 import { registerJob } from '../registry'
-import { logger } from '../../lib/logger'
+import { logger, createJobLogger } from '../../lib/logger'
 
 export const webhookJobSchema = z.object({
   url: z.string().url(),
@@ -14,15 +14,20 @@ export const webhookJobSchema = z.object({
 
 export type WebhookJobData = z.infer<typeof webhookJobSchema>
 
-const webhookHandler: JobHandler<WebhookJobData> = async ({ data, id, attemptsMade, updateProgress }) => {
+const webhookHandler: JobHandler<WebhookJobData> = async ({ data, id, attemptsMade, updateProgress, signal }) => {
   const { url, method = 'POST', headers = {}, body, timeout = 10000, retryOnFailure = false } = data
 
-  logger.info({ jobId: id, url, method, attempt: attemptsMade + 1 }, 'Processing webhook job')
+  const jobLogger = createJobLogger(id, 'webhook')
+  jobLogger.info({ url, method, attempt: attemptsMade + 1 }, 'Processing webhook job')
 
   await updateProgress(10)
 
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+  // Handle external abort signal (from worker timeout)
+  const abortHandler = () => controller.abort()
+  signal?.addEventListener('abort', abortHandler, { once: true })
 
   try {
     const response = await fetch(url, {
@@ -44,7 +49,7 @@ const webhookHandler: JobHandler<WebhookJobData> = async ({ data, id, attemptsMa
 
     if (!response.ok && retryOnFailure) {
       const error = new Error(`Webhook failed with status ${response.status}: ${responseBody}`)
-      logger.warn({ jobId: id, status: response.status, url }, 'Webhook failed, will retry')
+      jobLogger.warn({ status: response.status, url }, 'Webhook failed, will retry')
       throw error
     }
 
@@ -61,7 +66,7 @@ const webhookHandler: JobHandler<WebhookJobData> = async ({ data, id, attemptsMa
     }
 
     await updateProgress(100)
-    logger.info({ jobId: id, status: response.status, url }, 'Webhook job completed')
+    jobLogger.info({ status: response.status, url }, 'Webhook job completed')
     return result
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
@@ -69,12 +74,13 @@ const webhookHandler: JobHandler<WebhookJobData> = async ({ data, id, attemptsMa
         success: false,
         error: `Request timeout after ${timeout}ms`,
       }
-      logger.error({ jobId: id, url, timeout }, 'Webhook request timeout')
+      jobLogger.error({ url, timeout }, 'Webhook request timeout')
       return result
     }
     throw error
   } finally {
     clearTimeout(timeoutId)
+    signal?.removeEventListener('abort', abortHandler)
   }
 }
 
@@ -87,6 +93,10 @@ registerJob({
     backoff: { type: 'exponential', delay: 2000 },
     removeOnComplete: 100,
     removeOnFail: 50,
+    rateLimit: {
+      max: 10,
+      duration: 1000,
+    },
   },
 })
 
