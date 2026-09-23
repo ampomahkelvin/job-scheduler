@@ -70,6 +70,9 @@ const worker = createWorker('default', async (job: Job) => {
         throw new UnrecoverableError(message)
       }
     }
+
+    // For UnrecoverableError, let it propagate - with attempts: 1 it won't retry
+    // The error message will be captured in failedReason by BullMQ
     throw error
   } finally {
     clearTimeout(timeoutId)
