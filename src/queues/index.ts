@@ -2,6 +2,7 @@ import type { QueueOptions, Job, RepeatOptions } from 'bullmq';
 import { Queue, Worker } from 'bullmq'
 import { getRedisConnection, getWorkerRedisConnection } from '../lib/redis'
 import { logger } from '../lib/logger'
+import { env } from '../config/env'
 import type { JobOptions, JobData } from '../jobs/types'
 
 export const QUEUE_NAME = 'default'

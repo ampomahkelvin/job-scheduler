@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { JobHandler, JobResult } from '../types'
 import { registerJob } from '../registry'
-import { logger } from '../../lib/logger'
+import { logger, createJobLogger } from '../../lib/logger'
 
 export const reportJobSchema = z.object({
   type: z.enum(['daily', 'weekly', 'monthly', 'custom']),
@@ -20,8 +20,9 @@ export type ReportJobData = z.infer<typeof reportJobSchema>
 
 const reportHandler: JobHandler<ReportJobData> = async ({ data, id, attemptsMade, updateProgress }) => {
   const { type, recipients, format = 'json', filters, includeCharts = false } = data
+  const jobLogger = createJobLogger(id, 'report')
 
-  logger.info({ jobId: id, type, recipients, format, attempt: attemptsMade + 1 }, 'Processing report job')
+  jobLogger.info({ type, recipients, format, attempt: attemptsMade + 1 }, 'Processing report job')
 
   await updateProgress(10)
 
@@ -43,7 +44,7 @@ const reportHandler: JobHandler<ReportJobData> = async ({ data, id, attemptsMade
 
   await updateProgress(30)
 
-  logger.debug({ jobId: id }, 'Fetching job statistics from queue')
+  jobLogger.debug({}, 'Fetching job statistics from queue')
 
   await updateProgress(50)
 
@@ -72,10 +73,10 @@ const reportHandler: JobHandler<ReportJobData> = async ({ data, id, attemptsMade
 
   await updateProgress(90)
 
-  logger.info({ jobId: id, recipients, format, totalJobs: reportData.summary.totalJobs }, 'Report generated')
+  jobLogger.info({ recipients, format, totalJobs: reportData.summary.totalJobs }, 'Report generated')
 
   if (!recipients.length) {
-    logger.warn({ jobId: id }, 'No recipients specified, skipping delivery')
+    jobLogger.warn({}, 'No recipients specified, skipping delivery')
   }
 
   const result: JobResult = {
@@ -90,7 +91,7 @@ const reportHandler: JobHandler<ReportJobData> = async ({ data, id, attemptsMade
   }
 
   await updateProgress(100)
-  logger.info({ jobId: id }, 'Report job completed')
+  jobLogger.info({}, 'Report job completed')
   return result
 }
 

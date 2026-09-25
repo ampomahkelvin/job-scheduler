@@ -21,6 +21,42 @@ services:
       timeout: 3s
       retries: 10
 
+  api:
+    build: .
+    command: node dist/server.js
+    ports:
+      - "3000:3000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - API_KEY=${API_KEY:-your-secret-api-key-here}
+      - LOG_LEVEL=info
+      - BULL_BOARD_PATH=/admin/queues
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  worker:
+    build: .
+    command: node dist/worker.js
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=info
+      - API_KEY=${API_KEY:-your-secret-api-key-here}
+      - BULL_BOARD_PATH=/admin/queues
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
 volumes:
   redis-data:
     driver: local

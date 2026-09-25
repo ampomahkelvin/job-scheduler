@@ -3,6 +3,7 @@ import { queue, addJob, getJobCounts, pauseQueue, resumeQueue } from '../../queu
 import { getJob, listJobs } from '../../jobs/registry'
 import { logger } from '../../lib/logger'
 import { AppError } from '../errorHandler'
+import { createHash } from 'crypto'
 import type {
   CreateJobInput,
   JobIdParam,
@@ -25,18 +26,59 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
+    // Handle idempotency key - check header first, then body options
+    const idempotencyKey = req.headers['idempotency-key'] as string || options?.idempotencyKey
+    let customJobId = options?.jobId
+
+    // Generate jobId from idempotency key if provided
+    if (idempotencyKey && !customJobId) {
+      customJobId = createHash('sha256').update(`idem:${idempotencyKey}`).digest('hex').slice(0, 32)
+    }
+
+    // Check for existing job with same idempotency key
+    if (customJobId) {
+      const existingJob = await queue.getJob(customJobId)
+      if (existingJob) {
+        // Verify payload matches for idempotency key
+        if (idempotencyKey) {
+          const existingData = existingJob.data as Record<string, unknown>
+          if (JSON.stringify(existingData) !== JSON.stringify(data)) {
+            throw new AppError(409, 'IdempotencyKeyConflict', 'Idempotency key already used with different payload')
+          }
+        }
+        logger.info({ jobId: customJobId, name, idempotent: true }, 'Returning existing job (idempotent)')
+        return reply.status(200).send({
+          id: existingJob.id,
+          name: existingJob.name,
+          data: existingJob.data,
+          opts: existingJob.opts,
+          timestamp: new Date().toISOString(),
+          idempotent: true,
+        })
+      }
+    }
+
+    if (jobDef.schema) {
+      const result = jobDef.schema.safeParse(data)
+      if (!result.success) {
+        throw new AppError(400, 'ValidationError', 'Invalid job data', result.error.errors)
+      }
+    }
+
     const job = await addJob(name, data, {
       ...jobDef.defaultOptions,
       ...options,
+      jobId: customJobId,
     })
 
-    logger.info({ jobId: job.id, name }, 'Job enqueued')
+    logger.info({ jobId: job.id, name, idempotent: !!idempotencyKey }, 'Job enqueued')
     return reply.status(201).send({
       id: job.id,
       name: job.name,
       data: job.data,
       opts: job.opts,
       timestamp: new Date().toISOString(),
+      idempotent: !!idempotencyKey,
     })
   })
 

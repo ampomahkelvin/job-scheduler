@@ -5,6 +5,8 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   REDIS_URL: z.string().url().default('redis://localhost:6379'),
   BULL_BOARD_PATH: z.string().default('/admin/queues'),
+  API_KEY: z.string().optional(),
+  RATE_LIMIT_WEBHOOK: z.coerce.number().int().positive().default(10),
 })
 
 export type Env = z.infer<typeof envSchema>

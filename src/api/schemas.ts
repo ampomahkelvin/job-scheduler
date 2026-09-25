@@ -37,6 +37,8 @@ export const createJobSchema = z.object({
           tz: z.string().optional(),
         })
         .optional(),
+      jobId: z.string().optional(),
+      idempotencyKey: z.string().optional(),
     })
     .optional(),
 })

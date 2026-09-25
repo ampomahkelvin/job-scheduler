@@ -33,6 +33,23 @@ async function buildServer(): Promise<typeof server> {
   server.setErrorHandler(errorHandler)
   server.setNotFoundHandler(notFoundHandler)
 
+  // API Key authentication (skip for health and Bull Board)
+  if (env.API_KEY) {
+    const validKeys = new Set(env.API_KEY.split(',').map(k => k.trim()))
+    server.addHook('onRequest', async (req, reply) => {
+      const skipAuth = req.url.startsWith('/health')
+      if (skipAuth) return
+
+      const apiKey = req.headers['x-api-key'] as string
+      if (!apiKey || !validKeys.has(apiKey)) {
+        return reply.status(401).send({
+          error: 'Unauthorized',
+          message: 'Invalid or missing API key',
+        })
+      }
+    })
+  }
+
   server.addHook('onRequest', async (req) => {
     req.headers['x-request-id'] = req.headers['x-request-id'] || crypto.randomUUID()
   })
@@ -71,6 +88,17 @@ async function start(): Promise<void> {
     process.exit(1)
   }
 }
+
+// Graceful shutdown
+async function shutdown() {
+  logger.info('Shutting down server...')
+  await server.close()
+  logger.info('Server closed')
+  process.exit(0)
+}
+
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)
 
 if (require.main === module) {
   void start()
