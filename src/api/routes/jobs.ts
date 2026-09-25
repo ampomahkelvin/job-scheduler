@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify'
-import { queue, addJob, getJobCounts, pauseQueue, resumeQueue } from '../../queues'
+import { queueService } from '../../services/queue'
 import { getJob, listJobs } from '../../jobs/registry'
 import { logger } from '../../lib/logger'
 import { AppError } from '../errorHandler'
+import { JobSerializer } from '../serializers/job'
 import { createHash } from 'crypto'
 import type {
   CreateJobInput,
@@ -37,7 +38,7 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
 
     // Check for existing job with same idempotency key
     if (customJobId) {
-      const existingJob = await queue.getJob(customJobId)
+      const existingJob = await queueService.getJob(customJobId)
       if (existingJob) {
         // Verify payload matches for idempotency key
         if (idempotencyKey) {
@@ -47,25 +48,11 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
           }
         }
         logger.info({ jobId: customJobId, name, idempotent: true }, 'Returning existing job (idempotent)')
-        return reply.status(200).send({
-          id: existingJob.id,
-          name: existingJob.name,
-          data: existingJob.data,
-          opts: existingJob.opts,
-          timestamp: new Date().toISOString(),
-          idempotent: true,
-        })
+        return reply.status(200).send(JobSerializer.serializeForIdempotent(existingJob, true))
       }
     }
 
-    if (jobDef.schema) {
-      const result = jobDef.schema.safeParse(data)
-      if (!result.success) {
-        throw new AppError(400, 'ValidationError', 'Invalid job data', result.error.errors)
-      }
-    }
-
-    const job = await addJob(name, data, {
+    const job = await queueService.addJob(name, data, {
       ...jobDef.defaultOptions,
       ...options,
       jobId: customJobId,
@@ -73,12 +60,9 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
 
     logger.info({ jobId: job.id, name, idempotent: !!idempotencyKey }, 'Job enqueued')
     return reply.status(201).send({
-      id: job.id,
-      name: job.name,
-      data: job.data,
-      opts: job.opts,
-      timestamp: new Date().toISOString(),
+      ...JobSerializer.serialize(job),
       idempotent: !!idempotencyKey,
+      timestamp: new Date().toISOString(),
     })
   })
 
@@ -86,65 +70,31 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
     const { status, start = 0, count = 50 } = req.query
     const end = start + count - 1
 
-    const counts = await getJobCounts()
-    const jobs = await queue.getJobs(
+    const counts = await queueService.getJobCounts()
+    const jobs = await queueService.getJobs(
       status ? [status] : ['waiting', 'active', 'completed', 'failed', 'delayed'],
       start,
       end
     )
 
-    return reply.send({
-      counts,
-      jobs: jobs.map((job) => ({
-        id: job.id,
-        name: job.name,
-        data: job.data,
-        opts: job.opts,
-        progress: job.progress,
-        attemptsMade: job.attemptsMade,
-        timestamp: job.timestamp ? new Date(job.timestamp).toISOString() : undefined,
-        processedOn: job.processedOn ? new Date(job.processedOn).toISOString() : undefined,
-        finishedOn: job.finishedOn ? new Date(job.finishedOn).toISOString() : undefined,
-        failedReason: job.failedReason,
-        failedAt: job.failedReason ? (job.finishedOn ? new Date(job.finishedOn).toISOString() : undefined) : undefined,
-        returnvalue: job.returnvalue,
-      })),
-    })
+    return reply.send(JobSerializer.serializeList(jobs, counts))
   })
 
   app.get<{ Params: JobIdParam }>('/:id', async (req, reply) => {
     const { id } = req.params
-    const job = await queue.getJob(id)
+    const job = await queueService.getJob(id)
 
     if (!job) {
       throw new AppError(404, 'JobNotFound', `Job '${id}' not found`)
     }
 
-    const finishedOn = job.finishedOn ? new Date(job.finishedOn).toISOString() : undefined
-    const processedOn = job.processedOn ? new Date(job.processedOn).toISOString() : undefined
-    const timestamp = job.timestamp ? new Date(job.timestamp).toISOString() : undefined
-
-    return reply.send({
-      id: job.id,
-      name: job.name,
-      data: job.data,
-      opts: job.opts,
-      progress: job.progress,
-      attemptsMade: job.attemptsMade,
-      timestamp,
-      processedOn,
-      finishedOn,
-      failedReason: job.failedReason,
-      failedAt: job.failedReason ? finishedOn : undefined,
-      returnvalue: job.returnvalue,
-      stacktrace: job.stacktrace,
-    })
+    return reply.send(JobSerializer.serialize(job))
   })
 
   app.delete<{ Params: JobIdParam; Querystring: { force?: string } }>('/:id', async (req, reply) => {
     const { id } = req.params
     const force = req.query.force === 'true'
-    const job = await queue.getJob(id)
+    const job = await queueService.getJob(id)
 
     if (!job) {
       throw new AppError(404, 'JobNotFound', `Job '${id}' not found`)
@@ -163,7 +113,7 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Params: JobIdParam }>('/:id/retry', async (req, reply) => {
     const { id } = req.params
-    const job = await queue.getJob(id)
+    const job = await queueService.getJob(id)
 
     if (!job) {
       throw new AppError(404, 'JobNotFound', `Job '${id}' not found`)
@@ -175,24 +125,18 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
   })
 
   app.post('/pause', async (_req, reply) => {
-    await pauseQueue()
+    await queueService.pause()
     return reply.send({ message: 'Queue paused' })
   })
 
   app.post('/resume', async (_req, reply) => {
-    await resumeQueue()
+    await queueService.resume()
     return reply.send({ message: 'Queue resumed' })
   })
 
   app.get('/types', async (_req, reply) => {
     const jobs = listJobs()
-    return reply.send(
-      jobs.map((j) => ({
-        name: j.name,
-        schema: j.schema ? 'defined' : 'none',
-        defaultOptions: j.defaultOptions,
-      }))
-    )
+    return reply.send(JobSerializer.serializeTypes(jobs))
   })
 }
 

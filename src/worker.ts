@@ -1,9 +1,7 @@
 import type { Job } from 'bullmq'
-import { Queue } from 'bullmq'
-import { createWorker } from './queues'
+import { queueService } from './services/queue'
 import { getJobHandler } from './jobs/registry'
 import { logger } from './lib/logger'
-import { getWorkerRedisConnection } from './lib/redis'
 import { isRetryableError, UnrecoverableError, RetryableError } from './jobs/types'
 import './jobs/handlers/echo'
 import './jobs/handlers/webhook'
@@ -13,8 +11,9 @@ import './jobs/handlers/report'
 const DLQ_NAME = 'dlq'
 const DEFAULT_TIMEOUT = 30000
 
-const dlqQueue = new Queue(DLQ_NAME, {
-  connection: getWorkerRedisConnection(),
+const dlqQueue = queueService.getQueue().constructor as any
+const dlq = new dlqQueue('dlq', {
+  connection: queueService.getRedisConnection(),
   defaultJobOptions: {
     attempts: 1,
     removeOnComplete: 1000,
@@ -29,7 +28,7 @@ interface JobWithTimeout extends Job {
   }
 }
 
-const worker = createWorker('default', async (job: Job) => {
+const worker = queueService.createWorker('default', async (job: Job) => {
   const handler = getJobHandler(job.name)
   if (!handler) {
     logger.warn({ jobName: job.name, jobId: job.id }, 'No handler for job')
@@ -78,7 +77,7 @@ const worker = createWorker('default', async (job: Job) => {
     clearTimeout(timeoutId)
   }
 }, {
-  connection: getWorkerRedisConnection(),
+  connection: queueService.getRedisConnection(),
   concurrency: 5,
   limiter: {
     max: 100,
@@ -86,11 +85,11 @@ const worker = createWorker('default', async (job: Job) => {
   },
 })
 
-worker.on('completed', (job) => {
+worker.on('completed', (job: Job) => {
   logger.info({ jobId: job.id, name: job.name, attemptsMade: job.attemptsMade }, 'Worker completed job')
 })
 
-worker.on('failed', async (job, err) => {
+worker.on('failed', async (job: Job | undefined, err: Error) => {
   const attemptsMade = job?.attemptsMade ?? 0
   const maxAttempts = job?.opts?.attempts ?? 3
   const isFinalFailure = attemptsMade >= maxAttempts
@@ -113,11 +112,11 @@ worker.on('failed', async (job, err) => {
   }
 })
 
-worker.on('error', (err) => {
+worker.on('error', (err: Error) => {
   logger.error({ err }, 'Worker error')
 })
 
-worker.on('stalled', (jobId) => {
+worker.on('stalled', (jobId: string) => {
   logger.warn({ jobId }, 'Job stalled')
 })
 
@@ -144,7 +143,8 @@ async function moveToDeadLetter(job: Job, error: Error): Promise<void> {
 
 async function shutdown(): Promise<void> {
   logger.info('Shutting down worker...')
-  await Promise.all([worker.close(), dlqQueue.close()])
+  await queueService.close()
+  await (dlqQueue as any).close()
   logger.info('Worker and DLQ closed')
   process.exit(0)
 }
