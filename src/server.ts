@@ -7,7 +7,7 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter'
 import { FastifyAdapter } from '@bull-board/fastify'
 import { env } from './config/env'
 import { logger } from './lib/logger'
-import { queue } from './queues'
+import { queueService } from './services/queue'
 import { errorHandler, notFoundHandler } from './api/errorHandler'
 import jobsRoutes from './api/routes/jobs'
 import schedulesRoutes from './api/routes/schedules'
@@ -68,7 +68,7 @@ async function buildServer(): Promise<typeof server> {
 
   const serverAdapter = new FastifyAdapter()
   createBullBoard({
-    queues: [new BullMQAdapter(queue)],
+    queues: [new BullMQAdapter(queueService.getQueue())],
     serverAdapter,
   })
 

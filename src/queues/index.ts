@@ -1,81 +1,22 @@
-import type { QueueOptions, Job, RepeatOptions } from 'bullmq';
-import { Queue, Worker } from 'bullmq'
-import { getRedisConnection, getWorkerRedisConnection } from '../lib/redis'
-import { logger } from '../lib/logger'
-import { env } from '../config/env'
-import type { JobOptions, JobData } from '../jobs/types'
+export { queueService, QueueService, QUEUE_NAME } from '../services/queue'
+export { queueService as queue } from '../services/queue'
+export type { JobCounts, JobOptions, JobData } from '../jobs/types'
+export type { RepeatOptions } from 'bullmq'
 
-export const QUEUE_NAME = 'default'
+// Re-export queue methods for backward compatibility
+import { queueService } from '../services/queue'
 
-const defaultJobOptions: QueueOptions['defaultJobOptions'] = {
-  attempts: 3,
-  backoff: { type: 'exponential', delay: 1000 },
-  removeOnComplete: 100,
-  removeOnFail: 50,
-}
-
-export const queue = new Queue(QUEUE_NAME, {
-  connection: getRedisConnection(),
-  defaultJobOptions,
-})
-
-queue.on('error', (err: Error) => {
-  logger.error({ err }, 'Queue error')
-})
-
-queue.on('waiting', (job: Job) => {
-  logger.debug({ jobId: job.id }, 'Job waiting')
-})
-
-export async function addJob<T extends JobData>(
-  name: string,
-  data: T,
-  options?: JobOptions
-): Promise<Job<T>> {
-  return queue.add(name, data, options)
-}
-
-export async function addJobBulk<T extends JobData>(
-  jobs: Array<{ name: string; data: T; options?: JobOptions }>
-): Promise<Job<T>[]> {
-  return queue.addBulk(jobs.map((j) => ({ name: j.name, data: j.data, opts: j.options })))
-}
-
-export async function upsertJobScheduler<T extends JobData>(
-  schedulerId: string,
-  repeat: Omit<RepeatOptions, 'key'>,
-  data: T,
-  options?: JobOptions
-): Promise<unknown> {
-  return queue.upsertJobScheduler(schedulerId, repeat, { name: schedulerId, data, opts: options })
-}
-
-export async function getJobCounts(): Promise<Record<string, number>> {
-  return queue.getJobCounts()
-}
-
-export async function pauseQueue(): Promise<void> {
-  await queue.pause()
-  logger.info('Queue paused')
-}
-
-export async function resumeQueue(): Promise<void> {
-  await queue.resume()
-  logger.info('Queue resumed')
-}
-
-export async function closeQueue(): Promise<void> {
-  await queue.close()
-  logger.info('Queue closed')
-}
-
-export function createWorker(
-  name: string,
-  processor: (job: Job) => Promise<void>,
-  options?: Worker['opts']
-): Worker {
-  return new Worker(name, processor, {
-    connection: getWorkerRedisConnection(),
-    ...options,
-  })
-}
+export const addJob = queueService.addJob.bind(queueService)
+export const addJobBulk = queueService.addJobBulk.bind(queueService)
+export const upsertJobScheduler = queueService.upsertJobScheduler.bind(queueService)
+export const getJobCounts = queueService.getJobCounts.bind(queueService)
+export const pauseQueue = queueService.pause.bind(queueService)
+export const resumeQueue = queueService.resume.bind(queueService)
+export const closeQueue = queueService.close.bind(queueService)
+export const getJob = queueService.getJob.bind(queueService)
+export const getJobs = queueService.getJobs.bind(queueService)
+export const getRepeatableJobs = queueService.getRepeatableJobs.bind(queueService)
+export const removeRepeatableByKey = queueService.removeRepeatableByKey.bind(queueService)
+export const obliterate = queueService.obliterate.bind(queueService)
+export const drain = queueService.drain.bind(queueService)
+export const createWorker = queueService.createWorker.bind(queueService)

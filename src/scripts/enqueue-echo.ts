@@ -1,4 +1,4 @@
-import { addJob } from '../queues'
+import { queueService } from '../services/queue'
 import { logger } from '../lib/logger'
 
 async function enqueueEcho(): Promise<void> {
@@ -8,7 +8,7 @@ async function enqueueEcho(): Promise<void> {
 
   logger.info({ message, repeat, delay }, 'Enqueueing echo job')
 
-  const job = await addJob('echo', { message, repeat, delay })
+  const job = await queueService.addJob('echo', { message, repeat, delay })
 
   logger.info({ jobId: job.id }, 'Job enqueued successfully')
   process.exit(0)

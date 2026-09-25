@@ -1,0 +1,1 @@
+export { queueService, QueueService } from './queue'

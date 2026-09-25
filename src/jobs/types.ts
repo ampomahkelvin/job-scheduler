@@ -50,6 +50,15 @@ export interface RepeatOptions {
   tz?: string
 }
 
+export interface JobCounts {
+  waiting: number
+  active: number
+  completed: number
+  failed: number
+  delayed: number
+  paused: number
+}
+
 export type JobHandler<T extends JobData = JobData> = (
   job: { data: T; id: string; attemptsMade: number; updateProgress: (progress: number) => Promise<void>; signal?: AbortSignal }
 ) => Promise<JobResult>

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { getJobCounts } from '../../queues'
+import { queueService } from '../../services/queue'
 import { getRedisConnection } from '../../lib/redis'
 
 async function healthRoutes(app: FastifyInstance): Promise<void> {
@@ -17,7 +17,7 @@ async function healthRoutes(app: FastifyInstance): Promise<void> {
       redisConnected = false
     }
 
-    const counts = await getJobCounts()
+    const counts = await queueService.getJobCounts()
 
     const response = {
       status: redisConnected ? 'ok' : 'down',
