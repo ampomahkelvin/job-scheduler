@@ -37,7 +37,7 @@ async function buildServer(): Promise<typeof server> {
   if (env.API_KEY) {
     const validKeys = new Set(env.API_KEY.split(',').map(k => k.trim()))
     server.addHook('onRequest', async (req, reply) => {
-      const skipAuth = req.url.startsWith('/health') || req.url.startsWith(env.BULL_BOARD_PATH)
+      const skipAuth = req.url.startsWith('/health')
       if (skipAuth) return
 
       const apiKey = req.headers['x-api-key'] as string

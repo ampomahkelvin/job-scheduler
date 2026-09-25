@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  REDIS_URL: redis://localhost:6379
+  API_KEY: test-api-key
+  LOG_LEVEL: error
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run linting
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm run test -- --project=unit
+
+      - name: Run integration tests
+        run: npm run test -- --project=integration
+        env:
+          REDIS_URL: redis://localhost:6379
+
+      - name: Test Docker build
+        run: docker build -t job-scheduler-test .
+
+      - name: Test docker-compose
+        run: |
+          docker compose up -d --build
+          sleep 10
+          # Health check
+          curl -f http://localhost:3000/health || exit 1
+          # Test API with auth
+          curl -f -H "X-API-Key: test-api-key" http://localhost:3000/jobs/types || exit 1
+          docker compose down -v
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx tsc --noEmit
