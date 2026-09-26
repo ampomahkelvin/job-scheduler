@@ -1,8 +1,8 @@
-import type { Job } from 'bullmq'
-import { queueService } from './services/queue'
-import { getJobHandler } from './jobs/registry'
-import { logger } from './lib/logger'
-import { isRetryableError, UnrecoverableError, RetryableError } from './jobs/types'
+import type {Job} from 'bullmq'
+import {queueService} from './services/queue'
+import {getJobHandler} from './jobs/registry'
+import {logger} from './lib/logger'
+import {RetryableError, UnrecoverableError} from './jobs/types'
 import './jobs/handlers/echo'
 import './jobs/handlers/webhook'
 import './jobs/handlers/cleanup'
@@ -56,8 +56,7 @@ const worker = queueService.createWorker('default', async (job: Job) => {
     })
 
     if (!result.success) {
-      const error = new RetryableError(result.error || 'Job failed')
-      throw error
+      throw new RetryableError(result.error || 'Job failed')
     }
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
