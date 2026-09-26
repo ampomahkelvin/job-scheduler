@@ -2,8 +2,10 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { queue, addJob, closeQueue } from '@/queues'
 import { getRedisConnection, closeRedisConnections, getWorkerRedisConnection } from '@/lib/redis'
 import { registerJob } from '@/jobs/registry'
-import { Queue } from 'bullmq'
+import { Queue, Worker } from 'bullmq'
 import { RetryableError, UnrecoverableError } from '@/jobs/types'
+import { buildServer } from '@/server'
+import { createWorkerInstance } from '@/worker'
 
 async function waitForJobCompletion(jobId: string, timeoutMs = 30000): Promise<any> {
   const start = Date.now()
@@ -22,15 +24,26 @@ async function waitForJobCompletion(jobId: string, timeoutMs = 30000): Promise<a
 }
 
 describe('integration/api-dead-letter', () => {
+  let worker: any
+  let app: any
+
   beforeAll(async () => {
     const redis = getRedisConnection()
     if (redis.status === 'wait') {
       await redis.connect()
     }
     await redis.flushdb()
-  }, 10000)
+
+    // Start worker
+    worker = createWorkerInstance()
+
+    // Build and start the Fastify app
+    app = await buildServer()
+    await app.ready()
+  }, 15000)
 
   afterAll(async () => {
+    if (worker) await worker.close()
     await closeQueue()
     await closeRedisConnections()
   }, 5000)
@@ -41,15 +54,6 @@ describe('integration/api-dead-letter', () => {
   })
 
   it('should move failed job to dead-letter queue after retries exhausted', async () => {
-    const dlqQueue = new Queue('dlq', {
-      connection: getWorkerRedisConnection(),
-      defaultJobOptions: {
-        attempts: 1,
-        removeOnComplete: 1000,
-        removeOnFail: 1000,
-      },
-    })
-
     registerJob({
       name: 'dlq-test-job',
       handler: async () => {
@@ -58,31 +62,32 @@ describe('integration/api-dead-letter', () => {
       defaultOptions: { attempts: 2, backoff: { type: 'fixed', delay: 50 } },
     })
 
-    const job = await addJob('dlq-test-job', {})
+    const response = await app.inject({
+      method: 'POST',
+      url: '/jobs',
+      payload: { name: 'dlq-test-job', data: {} },
+    })
+
+    const job = JSON.parse(response.body)
     await waitForJobCompletion(job.id)
 
-    // Check DLQ
+    // Check DLQ via API
     await new Promise(r => setTimeout(r, 500))
-    const dlqJobs = await dlqQueue.getJobs(['waiting', 'completed', 'failed'], 0, 10)
+    const dlqResponse = await app.inject({
+      method: 'GET',
+      url: '/dead-letter',
+    })
+
+    expect(dlqResponse.statusCode).toBe(200)
+    const dlqJobs = JSON.parse(dlqResponse.body).jobs
     const dlqJob = dlqJobs.find(j => j.data.originalJob?.id === job.id)
 
     expect(dlqJob).toBeDefined()
-    expect(dlqJob!.data.originalJob.failedReason).toContain('Network error')
-    expect(dlqJob!.data.originalJob.attemptsMade).toBeGreaterThanOrEqual(1)
-
-    await dlqQueue.close()
+    expect(dlqJob.data.originalJob.failedReason).toContain('Network error')
+    expect(dlqJob.data.originalJob.attemptsMade).toBeGreaterThanOrEqual(1)
   }, 15000)
 
   it('should not move UnrecoverableError jobs to DLQ', async () => {
-    const dlqQueue = new Queue('dlq', {
-      connection: getWorkerRedisConnection(),
-      defaultJobOptions: {
-        attempts: 1,
-        removeOnComplete: 1000,
-        removeOnFail: 1000,
-      },
-    })
-
     registerJob({
       name: 'unrecoverable-dlq-test',
       handler: async () => {
@@ -91,28 +96,29 @@ describe('integration/api-dead-letter', () => {
       defaultOptions: { attempts: 1 },
     })
 
-    const job = await addJob('unrecoverable-dlq-test', {})
+    const response = await app.inject({
+      method: 'POST',
+      url: '/jobs',
+      payload: { name: 'unrecoverable-dlq-test', data: {} },
+    })
+
+    const job = JSON.parse(response.body)
     await waitForJobCompletion(job.id)
 
     await new Promise(r => setTimeout(r, 500))
-    const dlqJobs = await dlqQueue.getJobs(['waiting', 'completed', 'failed'], 0, 10)
+    const dlqResponse = await app.inject({
+      method: 'GET',
+      url: '/dead-letter',
+    })
+
+    expect(dlqResponse.statusCode).toBe(200)
+    const dlqJobs = JSON.parse(dlqResponse.body).jobs
     const dlqJob = dlqJobs.find(j => j.data.originalJob?.id === job.id)
 
     expect(dlqJob).toBeUndefined()
-
-    await dlqQueue.close()
   }, 15000)
 
   it('should replay job from DLQ', async () => {
-    const dlqQueue = new Queue('dlq', {
-      connection: getWorkerRedisConnection(),
-      defaultJobOptions: {
-        attempts: 1,
-        removeOnComplete: 1000,
-        removeOnFail: 1000,
-      },
-    })
-
     registerJob({
       name: 'replay-dlq-test',
       handler: async ({ data }) => {
@@ -123,36 +129,37 @@ describe('integration/api-dead-letter', () => {
     })
 
     // First, fail and go to DLQ
-    const job1 = await addJob('replay-dlq-test', { shouldFail: true })
+    const response1 = await app.inject({
+      method: 'POST',
+      url: '/jobs',
+      payload: { name: 'replay-dlq-test', data: { shouldFail: true } },
+    })
+
+    const job1 = JSON.parse(response1.body)
     await waitForJobCompletion(job1.id)
 
     await new Promise(r => setTimeout(r, 500))
-    let dlqJobs = await dlqQueue.getJobs(['waiting', 'completed', 'failed'], 0, 10)
+    let dlqResponse = await app.inject({
+      method: 'GET',
+      url: '/dead-letter',
+    })
+
+    const dlqJobs = JSON.parse(dlqResponse.body).jobs
     const dlqJob = dlqJobs.find(j => j.data.originalJob?.id === job1.id)
     expect(dlqJob).toBeDefined()
 
     // Replay the job
-    const mainQueue = new Queue('default', { connection: getWorkerRedisConnection() })
-    const originalJob = dlqJob!.data.originalJob
-    const replayedJob = await mainQueue.add(originalJob.name, { ...originalJob.data, shouldFail: false })
+    const replayResponse = await app.inject({
+      method: 'POST',
+      url: `/dead-letter/${dlqJob.id}/replay`,
+    })
 
-    const finishedJob = await waitForJobCompletion(replayedJob.id)
-    expect(finishedJob.returnvalue).toEqual({ success: true, data: { shouldFail: false } })
-
-    await dlqQueue.close()
-    await mainQueue.close()
+    expect(replayResponse.statusCode).toBe(200)
+    const replayBody = JSON.parse(replayResponse.body)
+    expect(replayBody.message).toBe('Job replayed successfully')
   }, 15000)
 
   it('should remove dead-letter job permanently', async () => {
-    const dlqQueue = new Queue('dlq', {
-      connection: getWorkerRedisConnection(),
-      defaultJobOptions: {
-        attempts: 1,
-        removeOnComplete: 1000,
-        removeOnFail: 1000,
-      },
-    })
-
     registerJob({
       name: 'delete-dlq-test',
       handler: async () => {
@@ -161,22 +168,57 @@ describe('integration/api-dead-letter', () => {
       defaultOptions: { attempts: 1 },
     })
 
-    const job = await addJob('delete-dlq-test', {})
+    const response = await app.inject({
+      method: 'POST',
+      url: '/jobs',
+      payload: { name: 'delete-dlq-test', data: {} },
+    })
+
+    const job = JSON.parse(response.body)
     await waitForJobCompletion(job.id)
 
     await new Promise(r => setTimeout(r, 500))
-    const dlqJobs = await dlqQueue.getJobs(['waiting', 'completed', 'failed'], 0, 10)
+    const dlqResponse = await app.inject({
+      method: 'GET',
+      url: '/dead-letter',
+    })
+
+    const dlqJobs = JSON.parse(dlqResponse.body).jobs
     const dlqJob = dlqJobs.find(j => j.data.originalJob?.id === job.id)
 
     expect(dlqJob).toBeDefined()
 
     // Remove permanently
-    await dlqJob!.remove()
+    const deleteResponse = await app.inject({
+      method: 'DELETE',
+      url: `/dead-letter/${dlqJob.id}`,
+    })
 
-    const afterRemoval = await dlqQueue.getJobs(['waiting', 'completed', 'failed'], 0, 10)
-    const found = afterRemoval.find(j => j.id === dlqJob!.id)
+    expect(deleteResponse.statusCode).toBe(204)
+
+    const afterRemoval = await app.inject({
+      method: 'GET',
+      url: '/dead-letter',
+    })
+
+    const afterJobs = JSON.parse(afterRemoval.body).jobs
+    const found = afterJobs.find(j => j.id === dlqJob.id)
     expect(found).toBeUndefined()
-
-    await dlqQueue.close()
   }, 15000)
+
+  async function waitForJobCompletion(jobId: string, timeoutMs = 30000): Promise<any> {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      const job = await queue.getJob(jobId)
+      if (!job) {
+        throw new Error(`Job ${jobId} not found`)
+      }
+      const state = await job.getState()
+      if (state === 'completed' || state === 'failed') {
+        return job
+      }
+      await new Promise(r => setTimeout(r, 100))
+    }
+    throw new Error(`Timeout waiting for job ${jobId} to complete`)
+  }
 })

@@ -1,27 +1,16 @@
 import type { FastifyInstance } from 'fastify'
-import { Queue } from 'bullmq'
+import { dlqService } from '../../services/dead-letter'
+import { queueService } from '../../services/queue'
 import { logger } from '../../lib/logger'
 import { AppError } from '../errorHandler'
-import { getWorkerRedisConnection } from '../../lib/redis'
 import type { JobQuery } from '../schemas'
-
-const DLQ_NAME = 'dlq'
-
-const dlqQueue = new Queue(DLQ_NAME, {
-  connection: getWorkerRedisConnection(),
-  defaultJobOptions: {
-    attempts: 1,
-    removeOnComplete: 1000,
-    removeOnFail: 1000,
-  },
-})
 
 async function deadLetterRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: JobQuery }>('/', async (req, reply) => {
     const { start = 0, count = 50 } = req.query
     const end = start + count - 1
 
-    const jobs = await dlqQueue.getJobs(['waiting', 'active', 'completed', 'failed'], start, end)
+    const jobs = await dlqService.getJobs(['waiting', 'active', 'completed', 'failed'], start, end)
 
     return reply.send({
       jobs: jobs.map((job) => ({
@@ -43,7 +32,7 @@ async function deadLetterRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Params: { id: string } }>('/:id', async (req, reply) => {
     const { id } = req.params
-    const job = await dlqQueue.getJob(id)
+    const job = await dlqService.getJob(id)
 
     if (!job) {
       throw new AppError(404, 'DeadLetterJobNotFound', `Dead letter job '${id}' not found`)
@@ -67,7 +56,7 @@ async function deadLetterRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Params: { id: string } }>('/:id/replay', async (req, reply) => {
     const { id } = req.params
-    const job = await dlqQueue.getJob(id)
+    const job = await dlqService.getJob(id)
 
     if (!job) {
       throw new AppError(404, 'DeadLetterJobNotFound', `Dead letter job '${id}' not found`)
@@ -87,14 +76,14 @@ async function deadLetterRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    const mainQueue = new Queue('default', {
-      connection: getWorkerRedisConnection(),
-    })
-
-    const replayedJob = await mainQueue.add(originalJob.originalJob.name, originalJob.originalJob.data, {
-      ...originalJob.originalJob.opts,
-      attempts: 3,
-    })
+    const replayedJob = await queueService.addJob(
+      originalJob.originalJob.name,
+      originalJob.originalJob.data,
+      {
+        ...originalJob.originalJob.opts,
+        attempts: 3,
+      }
+    )
 
     logger.info({ originalJobId: id, replayedJobId: replayedJob.id, name: originalJob.originalJob.name }, 'Job replayed from dead-letter queue')
 
@@ -107,7 +96,7 @@ async function deadLetterRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete<{ Params: { id: string } }>('/:id', async (req, reply) => {
     const { id } = req.params
-    const job = await dlqQueue.getJob(id)
+    const job = await dlqService.getJob(id)
 
     if (!job) {
       throw new AppError(404, 'DeadLetterJobNotFound', `Dead letter job '${id}' not found`)
@@ -119,12 +108,12 @@ async function deadLetterRoutes(app: FastifyInstance): Promise<void> {
   })
 
   app.post('/pause', async (_req, reply) => {
-    await dlqQueue.pause()
+    await dlqService.pause()
     return reply.send({ message: 'Dead-letter queue paused' })
   })
 
   app.post('/resume', async (_req, reply) => {
-    await dlqQueue.resume()
+    await dlqService.resume()
     return reply.send({ message: 'Dead-letter queue resumed' })
   })
 }

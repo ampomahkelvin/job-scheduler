@@ -52,11 +52,40 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    const job = await queueService.addJob(name, data, {
-      ...jobDef.defaultOptions,
-      ...options,
-      jobId: customJobId,
-    })
+    // Check for existing job with same idempotency key
+    if (customJobId) {
+      const existingJob = await queueService.getJob(customJobId)
+      if (existingJob) {
+        // Verify payload matches for idempotency key
+        if (idempotencyKey) {
+          const existingData = existingJob.data as Record<string, unknown>
+          if (JSON.stringify(existingData) !== JSON.stringify(data)) {
+            throw new AppError(409, 'IdempotencyKeyConflict', 'Idempotency key already used with different payload')
+          }
+        }
+        logger.info({ jobId: customJobId, name, idempotent: true }, 'Returning existing job (idempotent)')
+        return reply.status(200).send(serializeJobForIdempotent(existingJob, true))
+      }
+    }
+
+    let job
+    try {
+      job = await queueService.addJob(name, data, {
+        ...jobDef.defaultOptions,
+        ...options,
+        jobId: customJobId,
+      })
+    } catch (error: any) {
+      // Handle race condition: another request created the same job ID concurrently
+      if (error.message?.includes('Job with this id already exists') || error.message?.includes('duplicate job')) {
+        const existingJob = await queueService.getJob(customJobId!)
+        if (existingJob) {
+          logger.info({ jobId: customJobId, name, idempotent: true }, 'Race condition: returning existing job')
+          return reply.status(200).send(serializeJobForIdempotent(existingJob, true))
+        }
+      }
+      throw error
+    }
 
     logger.info({ jobId: job.id, name, idempotent: !!idempotencyKey }, 'Job enqueued')
     return reply.status(201).send({

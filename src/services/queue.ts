@@ -115,7 +115,12 @@ export class QueueService {
   }
 
   async obliterate(options?: { force?: boolean }): Promise<void> {
-    await this.queue.obliterate(options)
+    await this.queue.pause()
+    try {
+      await this.queue.obliterate(options)
+    } finally {
+      await this.queue.resume()
+    }
   }
 
   async drain(): Promise<void> {
