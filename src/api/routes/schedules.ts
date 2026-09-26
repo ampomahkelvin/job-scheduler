@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { queueService } from '../../services/queue'
 import { logger } from '../../lib/logger'
 import { AppError } from '../errorHandler'
-import { ScheduleSerializer } from '../serializers/schedule'
+import { serializeSchedule, serializeScheduleForUpsert } from '../serializers/schedule'
 import { createHash } from 'crypto'
 import type { RepeatOptions } from 'bullmq'
 import type {
@@ -51,14 +51,14 @@ async function schedulesRoutes(app: FastifyInstance): Promise<void> {
     const repeatableJob = await queueService.upsertJobScheduler(schedulerId, repeatOpts, data, options) as UpsertedJob
 
     logger.info({ repeatableJobKey: repeatableJob.key, name, repeat }, 'Schedule upserted')
-    return reply.status(201).send(ScheduleSerializer.serializeForUpsert(repeatableJob))
+    return reply.status(201).send(serializeScheduleForUpsert(repeatableJob))
   })
 
   app.get('/', async (_req, reply) => {
     const repeatableJobs = (await queueService.getRepeatableJobs()) as RepeatableJob[]
 
     return reply.send(
-      repeatableJobs.map((job) => ScheduleSerializer.serialize(job))
+      repeatableJobs.map((job) => serializeSchedule(job))
     )
   })
 
@@ -71,7 +71,7 @@ async function schedulesRoutes(app: FastifyInstance): Promise<void> {
       throw new AppError(404, 'ScheduleNotFound', `Schedule '${id}' not found`)
     }
 
-    return reply.send(ScheduleSerializer.serialize(job))
+    return reply.send(serializeSchedule(job))
   })
 
   app.delete<{ Params: ScheduleIdParam }>('/:id', async (req, reply) => {

@@ -1,11 +1,11 @@
 import { Job } from 'bullmq'
-import { JobCounts } from '../../jobs/types'
+import { JobCounts, JobOptions } from '../../jobs/types'
 
 export interface JobResponse {
   id: string
   name: string
   data: Record<string, unknown>
-  opts: Record<string, unknown>
+  opts: JobOptions
   progress: number
   attemptsMade: number
   timestamp?: string
@@ -28,50 +28,59 @@ export interface JobTypesResponse {
   defaultOptions: Record<string, unknown> | undefined
 }
 
-export class JobSerializer {
-  static serialize(job: Job): JobResponse {
-    const finishedOn = job.finishedOn ? new Date(job.finishedOn).toISOString() : undefined
-    const processedOn = job.processedOn ? new Date(job.processedOn).toISOString() : undefined
-    const timestamp = job.timestamp ? new Date(job.timestamp).toISOString() : undefined
-    const progress = typeof job.progress === 'number' ? job.progress : 0
+export function serializeJob(job: Job): JobResponse {
+  const {
+    id,
+    name,
+    data,
+    opts,
+    progress,
+    attemptsMade,
+    failedReason,
+    returnvalue,
+    stacktrace,
+    timestamp: ts,
+    processedOn: po,
+    finishedOn: fo,
+  } = job
 
-    const response: JobResponse = {
-      id: job.id as string,
-      name: job.name as string,
-      data: job.data as Record<string, unknown>,
-      opts: job.opts as Record<string, unknown>,
-      progress: typeof job.progress === 'number' ? job.progress : 0,
-      attemptsMade: job.attemptsMade,
-    }
+  const timestamp = ts ? new Date(ts).toISOString() : undefined
+  const processedOn = po ? new Date(po).toISOString() : undefined
+  const finishedOn = fo ? new Date(fo).toISOString() : undefined
 
-    if (timestamp !== undefined) response.timestamp = timestamp
-    if (processedOn !== undefined) response.processedOn = processedOn
-    if (finishedOn !== undefined) response.finishedOn = finishedOn
-    if (job.failedReason !== undefined) response.failedReason = job.failedReason
-    if (finishedOn !== undefined && job.failedReason) response.failedAt = finishedOn
-    if (job.returnvalue !== undefined) response.returnvalue = job.returnvalue
-    if (job.stacktrace !== undefined && job.stacktrace !== null) response.stacktrace = job.stacktrace
-
-    return response
+  return {
+    id: id as string,
+    name: name as string,
+    data,
+    opts: opts as JobOptions,
+    progress: typeof progress === 'number' ? progress : 0,
+    attemptsMade,
+    timestamp,
+    processedOn,
+    finishedOn,
+    failedReason,
+    failedAt: failedReason ? finishedOn : undefined,
+    returnvalue,
+    stacktrace: stacktrace ?? undefined,
   }
+}
 
-  static serializeList(jobs: Job[], counts: JobCounts): { counts: JobCounts; jobs: JobResponse[] } {
-    return {
-      counts,
-      jobs: jobs.map(this.serialize),
-    }
+export function serializeJobs(jobs: Job[], counts: JobCounts) {
+  return {
+    counts,
+    jobs: jobs.map(serializeJob),
   }
+}
 
-  static serializeTypes(jobs: Array<{ name: string; schema?: unknown; defaultOptions?: unknown }>): { name: string; schema: string; defaultOptions: Record<string, unknown> | undefined }[] {
-    return jobs.map((j) => ({
-      name: j.name,
-      schema: j.schema ? 'defined' : 'none',
-      defaultOptions: j.defaultOptions as Record<string, unknown> | undefined,
-    }))
-  }
+export function serializeJobTypes(jobs: Array<{ name: string; schema?: unknown; defaultOptions?: unknown }>) {
+  return jobs.map((j) => ({
+    name: j.name,
+    schema: j.schema ? 'defined' : 'none',
+    defaultOptions: j.defaultOptions as Record<string, unknown> | undefined,
+  }))
+}
 
-  static serializeForIdempotent(job: Job, idempotent: boolean): JobResponse & { idempotent: boolean } {
-    const base = this.serialize(job)
-    return { ...base, idempotent }
-  }
+export function serializeJobForIdempotent(job: Job, idempotent: boolean) {
+  const base = serializeJob(job)
+  return { ...base, idempotent }
 }

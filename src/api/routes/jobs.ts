@@ -3,7 +3,7 @@ import { queueService } from '../../services/queue'
 import { getJob, listJobs } from '../../jobs/registry'
 import { logger } from '../../lib/logger'
 import { AppError } from '../errorHandler'
-import { JobSerializer } from '../serializers/job'
+import { serializeJob, serializeJobs, serializeJobTypes, serializeJobForIdempotent } from '../serializers/job'
 import { createHash } from 'crypto'
 import type {
   CreateJobInput,
@@ -48,7 +48,7 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
           }
         }
         logger.info({ jobId: customJobId, name, idempotent: true }, 'Returning existing job (idempotent)')
-        return reply.status(200).send(JobSerializer.serializeForIdempotent(existingJob, true))
+        return reply.status(200).send(serializeJobForIdempotent(existingJob, true))
       }
     }
 
@@ -60,7 +60,7 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
 
     logger.info({ jobId: job.id, name, idempotent: !!idempotencyKey }, 'Job enqueued')
     return reply.status(201).send({
-      ...JobSerializer.serialize(job),
+      ...serializeJob(job),
       idempotent: !!idempotencyKey,
       timestamp: new Date().toISOString(),
     })
@@ -77,7 +77,7 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
       end
     )
 
-    return reply.send(JobSerializer.serializeList(jobs, counts))
+    return reply.send(serializeJobs(jobs, counts))
   })
 
   app.get<{ Params: JobIdParam }>('/:id', async (req, reply) => {
@@ -88,7 +88,7 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
       throw new AppError(404, 'JobNotFound', `Job '${id}' not found`)
     }
 
-    return reply.send(JobSerializer.serialize(job))
+    return reply.send(serializeJob(job))
   })
 
   app.delete<{ Params: JobIdParam; Querystring: { force?: string } }>('/:id', async (req, reply) => {
@@ -136,7 +136,7 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/types', async (_req, reply) => {
     const jobs = listJobs()
-    return reply.send(JobSerializer.serializeTypes(jobs))
+    return reply.send(serializeJobTypes(jobs))
   })
 }
 
