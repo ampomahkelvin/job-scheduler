@@ -130,11 +130,15 @@ export class QueueService {
   createWorker(
     name: string,
     processor: (job: Job) => Promise<void>,
-    options?: Worker['opts']
+    options?: Omit<Worker['opts'], 'connection'>
   ): Worker {
+    // The worker-safe connection (maxRetriesPerRequest: null, required by
+    // BullMQ's blocking commands) is always supplied here and cannot be
+    // overridden by callers - hence `connection` is omitted from the
+    // accepted options type rather than merely being spread-overridable.
     return new Worker(name, processor, {
-      connection: getWorkerRedisConnection(),
       ...options,
+      connection: getWorkerRedisConnection(),
     })
   }
 }
