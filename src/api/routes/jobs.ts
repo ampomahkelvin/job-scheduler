@@ -52,22 +52,6 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    // Check for existing job with same idempotency key
-    if (customJobId) {
-      const existingJob = await queueService.getJob(customJobId)
-      if (existingJob) {
-        // Verify payload matches for idempotency key
-        if (idempotencyKey) {
-          const existingData = existingJob.data as Record<string, unknown>
-          if (JSON.stringify(existingData) !== JSON.stringify(data)) {
-            throw new AppError(409, 'IdempotencyKeyConflict', 'Idempotency key already used with different payload')
-          }
-        }
-        logger.info({ jobId: customJobId, name, idempotent: true }, 'Returning existing job (idempotent)')
-        return reply.status(200).send(serializeJobForIdempotent(existingJob, true))
-      }
-    }
-
     let job
     try {
       job = await queueService.addJob(name, data, {
@@ -130,8 +114,10 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     if (force) {
+      // Force delete: discard to prevent retries, then remove
       await job.discard()
-      logger.info({ jobId: id, force: true }, 'Job discarded (forced)')
+      await job.remove()
+      logger.info({ jobId: id, force: true }, 'Job force deleted (discarded and removed)')
     } else {
       await job.remove()
       logger.info({ jobId: id, force: false }, 'Job removed')

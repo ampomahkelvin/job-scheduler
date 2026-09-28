@@ -116,6 +116,8 @@ export class QueueService {
 
   async obliterate(options?: { force?: boolean }): Promise<void> {
     await this.queue.pause()
+    // Wait for pause to fully take effect - BullMQ needs this
+    await new Promise(resolve => setTimeout(resolve, 500))
     try {
       await this.queue.obliterate(options)
     } finally {
