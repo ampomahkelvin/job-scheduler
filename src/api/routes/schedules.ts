@@ -44,7 +44,7 @@ async function schedulesRoutes(app: FastifyInstance): Promise<void> {
     if (tz) repeat.tz = tz
     if (limit) repeat.limit = limit
 
-    const schedulerId = generateSchedulerId(name, repeat)
+    const schedulerId = generateSchedulerId(name, repeat, data)
 
     const { key: repeatKey, ...repeatOpts } = repeat as RepeatOptions & { key?: string }
 
@@ -89,9 +89,10 @@ async function schedulesRoutes(app: FastifyInstance): Promise<void> {
   })
 }
 
-function generateSchedulerId(name: string, repeat: Record<string, unknown>): string {
+function generateSchedulerId(name: string, repeat: Record<string, unknown>, data: Record<string, unknown>): string {
   const repeatStr = JSON.stringify(repeat, Object.keys(repeat).sort())
-  const hash = createHash('sha256').update(`${name}:${repeatStr}`).digest('hex').slice(0, 16)
+  const dataStr = JSON.stringify(data, Object.keys(data).sort())
+  const hash = createHash('sha256').update(`${name}:${repeatStr}:${dataStr}`).digest('hex').slice(0, 16)
   return `${name}:${hash}`
 }
 

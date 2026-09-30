@@ -67,12 +67,20 @@ async function buildServer(): Promise<typeof server> {
   server.register(deadLetterRoutes, { prefix: '/dead-letter' })
 
   const serverAdapter = new FastifyAdapter()
+  serverAdapter.setBasePath(env.BULL_BOARD_PATH)
   createBullBoard({
-    queues: [new BullMQAdapter(queueService.getQueue())],
+    // @bull-board/api@5.23.0's QueueJob type predates BullMQ's JobProgress
+    // type allowing string progress values, so it disagrees with the
+    // installed bullmq's Job type at the type level only - runtime behavior
+    // is unaffected (numeric/object progress works normally).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    queues: [new BullMQAdapter(queueService.getQueue()) as any],
     serverAdapter,
   })
 
-  await server.register(serverAdapter.registerPlugin(), { prefix: env.BULL_BOARD_PATH })
+  // @bull-board/fastify's registerPlugin() takes basePath in its own plugin
+  // options (matching setBasePath above), not Fastify's `prefix` mechanism.
+  await server.register(serverAdapter.registerPlugin(), { basePath: env.BULL_BOARD_PATH })
 
   return server
 }

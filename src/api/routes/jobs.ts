@@ -52,11 +52,24 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    const job = await queueService.addJob(name, data, {
-      ...jobDef.defaultOptions,
-      ...options,
-      jobId: customJobId,
-    })
+    let job
+    try {
+      job = await queueService.addJob(name, data, {
+        ...jobDef.defaultOptions,
+        ...options,
+        jobId: customJobId,
+      })
+    } catch (error: any) {
+      // Handle race condition: another request created the same job ID concurrently
+      if (error.message?.includes('Job with this id already exists') || error.message?.includes('duplicate job')) {
+        const existingJob = await queueService.getJob(customJobId!)
+        if (existingJob) {
+          logger.info({ jobId: customJobId, name, idempotent: true }, 'Race condition: returning existing job')
+          return reply.status(200).send(serializeJobForIdempotent(existingJob, true))
+        }
+      }
+      throw error
+    }
 
     logger.info({ jobId: job.id, name, idempotent: !!idempotencyKey }, 'Job enqueued')
     return reply.status(201).send({
@@ -101,8 +114,10 @@ async function jobsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     if (force) {
+      // Force delete: discard to prevent retries, then remove
       await job.discard()
-      logger.info({ jobId: id, force: true }, 'Job discarded (forced)')
+      await job.remove()
+      logger.info({ jobId: id, force: true }, 'Job force deleted (discarded and removed)')
     } else {
       await job.remove()
       logger.info({ jobId: id, force: false }, 'Job removed')

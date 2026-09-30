@@ -26,6 +26,12 @@ export default defineConfig({
         test: {
           include: ['tests/integration/**/*.test.ts'],
           setupFiles: ['tests/setup.integration.ts'],
+          // These files share one Redis-backed queue singleton and each
+          // obliterates it in beforeEach. Running them in parallel processes
+          // causes cross-file races (one file's obliterate wiping another's
+          // in-flight assertions). Sequential execution trades some speed
+          // for correctness until the queue is namespaced per test file.
+          fileParallelism: false,
         },
       },
     ],
